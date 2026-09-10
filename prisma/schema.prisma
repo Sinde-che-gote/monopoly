@@ -1,0 +1,592 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// GAME
+// ============================================================
+
+model Game {
+  id        String     @id @default(cuid())
+  name      String
+  status    GameStatus @default(SETUP)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  rules        GameRules?
+  board        Board?
+  players      GamePlayerAssignment[]
+  transactions Transaction[]
+  turns        Turn[]
+  events       GameEvent[]
+  nfcEvents    NfcEvent[]
+  corrections  Correction[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model GameRules {
+  id     String @id @default(cuid())
+  gameId String @unique
+
+  currency       String @default("INR")
+  currencySymbol String @default("₹")
+
+  startingCash Int @default(1500)
+  goSalary     Int @default(200)
+
+  totalHouses Int @default(32)
+  totalHotels Int @default(12)
+  totalTowers Int @default(0)
+
+  towerMode Boolean @default(false)
+
+  freeParkingEnabled Boolean @default(false)
+  jailEnabled        Boolean @default(true)
+  auctionEnabled     Boolean @default(true)
+  mortgageEnabled    Boolean @default(true)
+
+  allowNegativeBalance Boolean @default(false)
+  allowBankerOverride  Boolean @default(false)
+
+  customRules Json?
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+}
+
+// ============================================================
+// BOARD
+// ============================================================
+
+model Board {
+  id          String  @id @default(cuid())
+  gameId      String  @unique
+  name        String
+  description String?
+
+  game      Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  positions Position[]
+
+  @@index([gameId])
+}
+
+model Position {
+  id      String       @id @default(cuid())
+  boardId String
+  index   Int
+  name    String
+  type    PositionType
+
+  price         Int?
+  baseRent      Int?
+  mortgageValue Int?
+
+  colourGroup String?
+
+  metadata Json?
+
+  board      Board                  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  properties Property[]
+  players    GamePlayerAssignment[] @relation("CurrentPosition")
+
+  @@unique([boardId, index])
+  @@index([boardId])
+  @@index([type])
+}
+
+// ============================================================
+// PLAYERS
+// ============================================================
+
+model Player {
+  id        String  @id @default(cuid())
+  name      String
+  nickname  String?
+  avatarUrl String?
+  colour    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments GamePlayerAssignment[]
+
+  @@index([name])
+}
+
+model GamePlayerAssignment {
+  id String @id @default(cuid())
+
+  gameId   String
+  playerId String
+  pawnId   String
+
+  startingCash Int
+  balance      Int
+
+  currentPositionId String?
+
+  isInJail  Boolean @default(false)
+  jailTurns Int     @default(0)
+
+  isActive  Boolean @default(true)
+  turnOrder Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  game            Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player          Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  pawn            Pawn      @relation(fields: [pawnId], references: [id])
+  currentPosition Position? @relation("CurrentPosition", fields: [currentPositionId], references: [id])
+
+  transactionsFrom Transaction[] @relation("TransactionFrom")
+  transactionsTo   Transaction[] @relation("TransactionTo")
+
+  turns      Turn[]
+  properties PropertyOwnership[]
+
+  @@unique([gameId, playerId])
+  @@unique([gameId, pawnId])
+  @@unique([gameId, turnOrder])
+  @@index([gameId])
+  @@index([playerId])
+  @@index([pawnId])
+  @@index([currentPositionId])
+}
+
+// ============================================================
+// PAWNS
+// ============================================================
+
+model Pawn {
+  id       String     @id @default(cuid())
+  pawnCode String     @unique
+  name     String
+  imageUrl String?
+  notes    String?
+  status   PawnStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  nfcTags     NfcTag[]
+  assignments GamePlayerAssignment[]
+  nfcEvents   NfcEvent[]
+
+  @@index([status])
+}
+
+model NfcTag {
+  id     String @id @default(cuid())
+  uid    String @unique
+  pawnId String
+
+  isActive Boolean @default(true)
+
+  registeredAt DateTime  @default(now())
+  lastSeenAt   DateTime?
+
+  pawn   Pawn       @relation(fields: [pawnId], references: [id], onDelete: Cascade)
+  events NfcEvent[]
+
+  @@index([pawnId])
+  @@index([uid])
+}
+
+// ============================================================
+// DEVICES
+// ============================================================
+
+model Device {
+  id         String     @id @default(cuid())
+  deviceCode String     @unique
+  name       String
+  type       DeviceType
+
+  connected          Boolean   @default(false)
+  lastHeartbeat      DateTime?
+  lastConnectedAt    DateTime?
+  lastDisconnectedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  nfcEvents NfcEvent[]
+
+  @@index([type])
+  @@index([connected])
+}
+
+// ============================================================
+// PROPERTIES
+// ============================================================
+
+model Property {
+  id String @id @default(cuid())
+
+  positionId String @unique
+
+  name String
+  type PropertyType
+
+  price         Int?
+  baseRent      Int?
+  mortgageValue Int?
+
+  colourGroup String?
+
+  metadata Json?
+
+  position Position @relation(fields: [positionId], references: [id])
+
+  ownership PropertyOwnership?
+  buildings Building[]
+
+  @@index([type])
+  @@index([colourGroup])
+}
+
+model PropertyOwnership {
+  id String @id @default(cuid())
+
+  propertyId   String
+  gamePlayerId String
+
+  acquiredAt    DateTime  @default(now())
+  transferredAt DateTime?
+
+  isMortgaged Boolean @default(false)
+
+  property Property             @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  player   GamePlayerAssignment @relation(fields: [gamePlayerId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId])
+  @@index([gamePlayerId])
+}
+
+// ============================================================
+// BUILDINGS
+// ============================================================
+
+model Building {
+  id String @id @default(cuid())
+
+  propertyId String
+
+  houses Int @default(0)
+  hotels Int @default(0)
+  towers Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId])
+}
+
+// ============================================================
+// BANK INVENTORY
+// ============================================================
+
+model BankInventory {
+  id     String @id @default(cuid())
+  gameId String @unique
+
+  housesTotal Int @default(32)
+  housesUsed  Int @default(0)
+
+  hotelsTotal Int @default(12)
+  hotelsUsed  Int @default(0)
+
+  towersTotal Int @default(0)
+  towersUsed  Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@index([gameId])
+}
+
+// ============================================================
+// TRANSACTIONS
+// ============================================================
+
+model Transaction {
+  id String @id @default(cuid())
+
+  gameId String
+
+  fromPlayerId String?
+  toPlayerId   String?
+
+  amount Int
+
+  type   TransactionType
+  reason String?
+
+  propertyId String?
+
+  relatedAction String?
+
+  idempotencyKey String? @unique
+
+  createdAt DateTime @default(now())
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  fromPlayer GamePlayerAssignment? @relation("TransactionFrom", fields: [fromPlayerId], references: [id])
+  toPlayer   GamePlayerAssignment? @relation("TransactionTo", fields: [toPlayerId], references: [id])
+
+  corrections Correction[] @relation("OriginalTransaction")
+
+  @@index([gameId])
+  @@index([fromPlayerId])
+  @@index([toPlayerId])
+  @@index([createdAt])
+  @@index([type])
+}
+
+// ============================================================
+// CORRECTIONS
+// ============================================================
+
+model Correction {
+  id String @id @default(cuid())
+
+  gameId String
+
+  originalTransactionId   String
+  correctionTransactionId String?
+
+  reason String
+
+  createdAt DateTime @default(now())
+
+  game                Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  originalTransaction Transaction @relation("OriginalTransaction", fields: [originalTransactionId], references: [id])
+
+  @@index([gameId])
+  @@index([originalTransactionId])
+}
+
+// ============================================================
+// TURNS
+// ============================================================
+
+model Turn {
+  id String @id @default(cuid())
+
+  gameId       String
+  gamePlayerId String
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  startingPositionId String?
+  endingPositionId   String?
+
+  actions Json?
+
+  game   Game                 @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player GamePlayerAssignment @relation(fields: [gamePlayerId], references: [id])
+
+  @@index([gameId])
+  @@index([gamePlayerId])
+  @@index([startedAt])
+}
+
+// ============================================================
+// GAME EVENTS
+// ============================================================
+
+model GameEvent {
+  id String @id @default(cuid())
+
+  gameId String
+
+  type        GameEventType
+  description String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@index([createdAt])
+  @@index([type])
+}
+
+// ============================================================
+// NFC EVENTS
+// ============================================================
+
+model NfcEvent {
+  id        String         @id @default(cuid())
+  uid       String
+  nfcTagId  String?
+  pawnId    String?
+  gameId    String?
+  deviceId  String?
+  action    String?
+  status    NfcEventStatus @default(RECEIVED)
+  timestamp DateTime       @default(now())
+  uidHash   String?
+
+  nfcTag NfcTag? @relation(fields: [nfcTagId], references: [id])
+  pawn   Pawn?   @relation(fields: [pawnId], references: [id])
+  game   Game?   @relation(fields: [gameId], references: [id])
+  device Device? @relation(fields: [deviceId], references: [id])
+
+  @@index([uid])
+  @@index([nfcTagId])
+  @@index([pawnId])
+  @@index([gameId])
+  @@index([deviceId])
+  @@index([timestamp])
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum GameStatus {
+  SETUP
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum PawnStatus {
+  ACTIVE
+  INACTIVE
+  LOST
+  RETIRED
+}
+
+enum DeviceType {
+  ANDROID_NFC
+  LAPTOP
+  TABLET
+  USB_NFC
+  WEB_NFC
+  DEMO
+}
+
+enum PositionType {
+  GO
+  PROPERTY
+  RAILROAD
+  UTILITY
+  TAX
+  CHANCE
+  COMMUNITY_CHEST
+  JAIL
+  FREE_PARKING
+  GO_TO_JAIL
+  OTHER
+}
+
+enum PropertyType {
+  PROPERTY
+  RAILROAD
+  UTILITY
+}
+
+enum TransactionType {
+  BANK_TO_PLAYER
+  PLAYER_TO_BANK
+  PLAYER_TO_PLAYER
+  RENT
+  TAX
+  FINE
+  GO_PAYMENT
+  PROPERTY_PURCHASE
+  PROPERTY_SALE
+  PROPERTY_TRANSFER
+  MORTGAGE
+  UNMORTGAGE
+  HOUSE_PURCHASE
+  HOUSE_SALE
+  HOTEL_PURCHASE
+  HOTEL_SALE
+  TOWER_PURCHASE
+  TOWER_SALE
+  CUSTOM
+  CORRECTION
+}
+
+enum GameEventType {
+  GAME_CREATED
+  GAME_STARTED
+  GAME_PAUSED
+  GAME_RESUMED
+  GAME_COMPLETED
+  PLAYER_ADDED
+  PLAYER_REMOVED
+  PAWN_REGISTERED
+  NFC_SCANNED
+  MONEY_TRANSFERRED
+  PROPERTY_PURCHASED
+  PROPERTY_TRANSFERRED
+  PROPERTY_MORTGAGED
+  PROPERTY_UNMORTGAGED
+  BUILDING_PURCHASED
+  BUILDING_SOLD
+  GO_PASSED
+  POSITION_CHANGED
+  PLAYER_SENT_TO_JAIL
+  TURN_STARTED
+  TURN_ENDED
+  TRANSACTION_CORRECTED
+  CUSTOM
+}
+
+enum NfcEventStatus {
+  RECEIVED
+  RESOLVED
+  REJECTED
+  DUPLICATE
+  ERROR
+}
+
+// ============================================================
+// COMMUNITY CHEST CARDS
+// ============================================================
+
+model CommunityChestCard {
+  id String @id @default(cuid())
+
+  title       String
+  description String
+
+  amount Int @default(0)
+
+  action CommunityChestAction
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([action])
+  @@index([isActive])
+}
+
+enum CommunityChestAction {
+  RECEIVE_MONEY
+  PAY_MONEY
+  MOVE_TO_GO
+  MOVE_TO_JAIL
+  GET_OUT_OF_JAIL
+}
